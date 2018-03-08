@@ -12,6 +12,7 @@ import monitor_params
 import utils
 sys.path.append("..")
 from myapp.parse import ParseUtil
+from common_metrics import CommonMetrics
 from time import time
 
 
@@ -25,25 +26,11 @@ logging.basicConfig(level=logging.INFO,
 import sys
 logger = logging.getLogger(sys.path[0] + 'tomcat_metrics')
 
-class TomcatMetrics(object):
+class TomcatMetrics(CommonMetrics):
 
-    def __init__(self):
-        pass
-
-
-    def ip_list(self):
-        '''
-        return tomcat_ip list
-        '''
-        ip_list = []
-        try:
-            list = re.split(r'[,\s]\s*', monitor_params.tomcat_ip.strip())
-        except:
-            logging.error("Can't split tomcat_ip. Check the tomcat_ip in monitor_params.py.")
-            sys.exit(1)
-        else:
-            ip_list = list
-        return ip_list
+    def __init__(self, name = 'tomcat'):
+        self.master_name = "{0}_master".format(name)
+        self.tenant_name = "{0}_tenant".format(name)
     
     def master_instance(self):
         '''
@@ -59,13 +46,6 @@ class TomcatMetrics(object):
         tenant_instance = utils.get_instances(monitor_params.tomcat_ip, monitor_params.tomcat_tenant_port)
         return tenant_instance
 
-    def tomcat_process_instance(self):
-        '''
-        @return list of tomcat process instances.
-        '''
-        process_instances = utils.get_instances(monitor_params.tomcat_ip, monitor_params.process_exporter_port)
-        return process_instances
-
     def tomcat_node_state(self, role, process_instance):
         '''
         @return a float value 1 or 0, indicating the node state up or down.
@@ -73,33 +53,32 @@ class TomcatMetrics(object):
         state = {}
         url = utils.prometheus_url()
         param = {
-            "query": 'tomcat_{0}_process_up{{instance="{1}"}}'.format(role, process_instance)
+            "query": '{0}_process_up{{instance="{1}"}}'.format(role, process_instance)
         }
         response = ParseUtil.request_metrics(url, param)
         for i in range(len(response)):
             state.setdefault(response[i]['metric']['instance'], response[i]['value'][1])
         if state.has_key(process_instance):
-            print float(state[process_instance])
             return float(state[process_instance])
         else:
             logging.error("No instance in the tomcat cluster, tomcat {0} node {1} down.".format(role, process_instance))
             return 0.0
 
-    def tomcat_cluster_state(self):
+    def cluster_state(self, ip):
         '''
         @return tomcat cluster state, and the numbers of healthy nodes.
         '''
         master_instances = self.master_instance()
         tenant_instances = self.tenant_instance()
-        process_instances = self.tomcat_process_instance()
+        process_instances = self.process_instance(ip)
         state = 0.0
         success_count = 0.0
         master_count = 0.0
         tenant_count = 0.0
 
         for i in range(len(process_instances)):
-            master_up = self.tomcat_node_state("master", process_instances[i])
-            tenant_up = self.tomcat_node_state("tenant", process_instances[i])
+            master_up = self.tomcat_node_state(self.master_name, process_instances[i])
+            tenant_up = self.tomcat_node_state(self.tenant_name, process_instances[i])
             if master_up:
                 master_count += 1
             if tenant_up:
@@ -117,10 +96,9 @@ class TomcatMetrics(object):
         cpu_usage = {}
         url = utils.prometheus_url()
         param = {
-            "query": 'tomcat_{0}_cpu_percentage{{instance="{1}"}}'.format(role, process_instance)
+            "query": '{0}_cpu_percentage{{instance="{1}"}}'.format(role, process_instance)
         }
         response = ParseUtil.request_metrics(url, param)
-        # pprint(response)
         for i in range(len(response)):
             cpu_usage.setdefault(response[i]['metric']['instance'], response[i]['value'][1])
         if cpu_usage.has_key(process_instance):
@@ -137,14 +115,12 @@ class TomcatMetrics(object):
         uptime = {}
         url = utils.prometheus_url()
         param = {
-            "query": 'tomcat_{0}_running_time_seconds_total{{instance="{1}"}}'.format(role, process_instance)
+            "query": '{0}_running_time_seconds_total{{instance="{1}"}}'.format(role, process_instance)
         }
         response = ParseUtil.request_metrics(url, param)
-        # pprint(response)
         for i in range(len(response)):
             uptime.setdefault(response[i]['metric']['instance'], response[i]['value'][1])
         if uptime.has_key(process_instance):
-            print float(uptime[process_instance])
             return float(uptime[process_instance])
         else:
             logging.error("No instance in the tomcat cluster, get tomcat {0} node {1} uptime failed.".format(role, process_instance))
@@ -157,33 +133,30 @@ class TomcatMetrics(object):
         mem_usage = {}
         url = utils.prometheus_url()
         param = {
-            "query": 'sum by (instance)(tomcat_{0}_memory_usage_bytes_total{{instance="{1}", mode=~"rss|vms|shared"}})'.format(role, process_instance)
+            "query": 'sum by (instance)({0}_memory_usage_bytes_total{{instance="{1}", mode=~"rss|vms|shared"}})'.format(role, process_instance)
         }
         response = ParseUtil.request_metrics(url, param)
-        # pprint(response)
         for i in range(len(response)):
             mem_usage.setdefault(response[i]['metric']['instance'], response[i]['value'][1])
         if mem_usage.has_key(process_instance):
-            print float(mem_usage[process_instance])
             return float(mem_usage[process_instance])
         else:
             logging.error("No instance in the tomcat cluster, get tomcat {0} node {1} memory usage failed.".format(role, process_instance))
             return None           
 
-    def tomcat_cluster_list(self):
+    def cluster_list(self, ip):
         master_instances = self.master_instance()
         tenant_instances = self.tenant_instance()
-        process_instances = self.tomcat_process_instance()
-        ip_list = self.ip_list()
+        process_instances = self.process_instance(ip)
         uptime = time()
         for i in range(len(process_instances)):
-            master_state = self.tomcat_node_state("master", process_instances[i])
-            tenant_state = self.tomcat_node_state("tenant", process_instances[i])
+            master_state = self.tomcat_node_state(self.master_name, process_instances[i])
+            tenant_state = self.tomcat_node_state(self.tenant_name, process_instances[i])
             if master_state:
-                uptime = self.tomcat_uptime("master", process_instances[i])
+                uptime = self.tomcat_uptime(self.master_name, process_instances[i])
                 break
             elif tenant_state:
-                uptime = self.tomcat_uptime("tenant", process_instances[i])
+                uptime = self.tomcat_uptime(self.tenant_name, process_instances[i])
                 break
             else:
                 continue
@@ -191,13 +164,13 @@ class TomcatMetrics(object):
         master_info = []
         tenant_info = []
         for i in range(len(master_instances)):
-            master_info.append(self.tomcat_node_detail("master", process_instances[i], master_instances[i]))
-            tenant_info.append(self.tomcat_node_detail("tenant", process_instances[i], tenant_instances[i]))
+            master_info.append(self.tomcat_node_detail(self.master_name, process_instances[i], master_instances[i]))
+            tenant_info.append(self.tomcat_node_detail(self.tenant_name, process_instances[i], tenant_instances[i]))
 
         cluster_info = {
-            "tomcat_cluster_state" : self.tomcat_cluster_state()[0],
+            "tomcat_cluster_state" : self.cluster_state(ip)[0],
             "tomcat_total_nodes" : float(sum([len(master_instances), len(tenant_instances)])),
-            "tomcat_healthy_nodes" : self.tomcat_cluster_state()[1],
+            "tomcat_healthy_nodes" : self.cluster_state(ip)[1],
             "tomcat_uptime" : time() - uptime,
             "tomcat_master_info": master_info,
             "tomcat_tenant_info": tenant_info
@@ -225,7 +198,8 @@ class TomcatMetrics(object):
 
 def main():
     tomcat = TomcatMetrics()
-    tomcat.tomcat_cluster_list()
+    from pprint import pprint
+    pprint(tomcat.cluster_list(monitor_params.tomcat_ip))
 
 if __name__ == '__main__':
     main()

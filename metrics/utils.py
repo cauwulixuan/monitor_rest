@@ -18,7 +18,6 @@ def get_instances(ip, port):
     if r',' in ip.strip():
         try:
             list = re.split(r'[,\s]\s*', ip.strip())
-            print list
         except:
             logging.error("Can't split ip: {0}. Check the ip {0} in monitor_params.py.".format(ip))
             sys.exit(1)
@@ -30,59 +29,65 @@ def get_instances(ip, port):
     for i in range(len(ip_list)):
         url = ip_list[i] + ":" + port
         instances.append(url)
-
-    print instances
     return instances
 
-def prometheus_url():
-    instances = get_instances(monitor_params.prometheus_ip, monitor_params.prometheus_port)
-    success = 0
-    for i in range(len(instances)):
-        url = 'http://{0}/api/v1/query'.format(instances[i])
+
+
+def get_instance_index(process):
+    success = 0.0
+    prometheus_instances = get_instances(monitor_params.prometheus_ip, monitor_params.prometheus_port)
+    for index in range(len(prometheus_instances)):
+        prom_url = 'http://{0}/api/v1/query'.format(prometheus_instances[index])
         param = {
-            "query": 'prometheus_build_info{{instance="{0}"}}'.format(instances[i])
+            "query": 'up{{job="{0}"}}'.format(process)
         }
-        logging.info("start GET %s?%s", url, param)
+        logging.info("start GET %s?%s", prom_url, param)
         try:
-            response = requests.get(url, params=param)
+            response = requests.get(prom_url, params=param)
             response.raise_for_status()
         except requests.exceptions.ConnectionError:
-            logging.error("GET %s?%s failed! Connection Error.", url, param)
+            logging.error("GET %s?%s failed! Connection Error.", prom_url, param)
             continue
         except requests.RequestException as e:
             logging.error(e)
             continue
         else:
             logging.info("GET /api/v1/query?%s ok! Response code is = %s", param, response.status_code)
-            success += 1
-            return url            
+            result = response.json()
+            if int(result['data']['result'][0]['value'][1]) == 1:
+                success += 1
+                return index
+            else:
+                continue
     if not success:
-        logging.error("No prometheus url available, please check prometheus.")
+        logging.error("No prometheus or grafana available, please check it out.")
         sys.exit(1)
-    
+
+def normal_index():
+    prom_index = get_instance_index("prometheus")
+    grafana_index = get_instance_index("grafana")
+    if prom_index == grafana_index:
+        logging.info("prometheus and grafana all normal, index is: {0}".format(grafana_index))
+        return grafana_index
+    elif prom_index < grafana_index:
+        ''' prometheus1 ok, but grafana1 down, grafana2 ok.'''
+        logging.info("prometheus1 OK, but grafana1 down, using grafana index, the index is: {0}".format(grafana_index))
+        return grafana_index
+    else:
+        ''' prometheus1 down, prometheus2 ok, grafana ok.'''
+        logging.info("prometheus1 down, prometheus2 OK. grafana OK, using prometheus index, the index is: {0}".format(prom_index))
+        return prom_index
+
+def prometheus_url():
+    prometheus_instances = get_instances(monitor_params.prometheus_ip, monitor_params.prometheus_port)
+    index = normal_index()
+    url = 'http://{0}/api/v1/query'.format(prometheus_instances[index])
+    return url
 
 def grafana_url():
-    prom_url = prometheus_url()
-    instances = get_instances(monitor_params.grafana_ip, monitor_params.grafana_port)
-    outside_instances = get_instances(monitor_params.grafana_outside_ip, monitor_params.grafana_port)
-    success = 0
-    for i in range(len(instances)):
-        param = {
-            "query": 'grafana_info{{instance="{0}"}}'.format(instances[i])
-        }
-        logging.info("start GET %s?%s", prom_url, param)
-        response = requests.get(prom_url, params=param)
-        if response.status_code != requests.codes.ok:
-            logging.error("GET %s?%s failed! The error code is: %s", prom_url, param, response.status_code)
-            continue
-        else:
-            logging.info("GET /api/v1/query?%s ok! Response code is = %s", param, response.status_code)
-            success += 1
-            return outside_instances[i]
-
-    if not success:
-        logging.error("No grafana url available, please check! ")
-        sys.exit(1)
+    grafana_instances = get_instances(monitor_params.grafana_outside_ip, monitor_params.grafana_port)
+    index = normal_index()
+    return grafana_instances[index]
 
 
 def main():

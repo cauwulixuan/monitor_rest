@@ -2,57 +2,44 @@
 #!/usr/bin/python
 #-*- coding:utf-8 -*-
 
-import os
-import sys
-import re
-import time
-import requests
-sys.path.append('..')
-from myapp.parse import ParseUtil
-# from . import monitor_params
-
+import monitor_params
 import utils
+from common_metrics import CommonMetrics
 from consul_metrics import ConsulMetrics
-from nginx_metrics import NginxMetrics
 from tomcat_metrics import TomcatMetrics
-from prometheus_metrics import PrometheusMetrics
 from grafana_metrics import GrafanaMetrics
-from mysql_metrics import MysqlMetrics
-from keycloak_metrics import KeycloakMetrics
-from knox_metrics import KnoxMetrics
-from ambari_server_metrics import AmbariServerMetrics
-from ambari_agent_metrics import AmbariAgentMetrics
-from ldap_metrics import LdapMetrics
 
 
 def monitor_metrics():
 
-    consul = ConsulMetrics()
-    nginx = NginxMetrics()
-    tomcat = TomcatMetrics()
-    prometheus = PrometheusMetrics()
-    grafana = GrafanaMetrics()
-    mysql = MysqlMetrics()
-    keycloak = KeycloakMetrics()
-    knox = KnoxMetrics()
-    ambari_server = AmbariServerMetrics()
-    ambari_agent = AmbariAgentMetrics()
-    ldap = LdapMetrics()
-    
-    result = []
-    metric_info = {
-        "consul_info": consul.consul_cluster_list(),
-        "nginx_info" : nginx.nginx_cluster_list(),
-        "tomcat_info" : tomcat.tomcat_cluster_list(),
-        "prometheus_info" : prometheus.prometheus_cluster_list(),
-        "grafana_info" : grafana.grafana_cluster_list(),
-        "mysql_info" : mysql.mysql_cluster_list(),
-        "keycloak_info" : keycloak.keycloak_cluster_list(),
-        "knox_info" : knox.knox_cluster_list(),
-        "ambari_server_info" : ambari_server.ambari_server_cluster_list(),
-        "ambari_agent_info" : ambari_agent.ambari_agent_cluster_list(),
-        "ldap_info" : ldap.ldap_cluster_list()
+    name_list = {
+        "ambari_agent" : monitor_params.ambari_agent_ip,
+        "ambari_server" : monitor_params.ambari_server_ip,
+        "keycloak" : monitor_params.keycloak_ip,
+        "knox" : monitor_params.knox_ip,
+        "slapd" : monitor_params.ldap_ip,
+        "mysqld" : monitor_params.mysql_ip,
+        "prometheus" : monitor_params.prometheus_ip,
     }
+
+    result = []
+    metric_info = {}
+
+    consul = ConsulMetrics()
+    consul_info = consul.cluster_list(monitor_params.consul_ip)
+    tomcat = TomcatMetrics()
+    tomcat_info = tomcat.cluster_list(monitor_params.tomcat_ip)
+    grafana = GrafanaMetrics()
+    grafana_info = grafana.cluster_list(monitor_params.grafana_ip)
+
+    for name in name_list:
+        common = CommonMetrics(name)
+        metrics = common.cluster_list(name_list[name])
+        metric_info.setdefault("{0}_info".format(name), metrics)
+    metric_info.setdefault("consul_info", consul_info)
+    metric_info.setdefault("tomcat_info", tomcat_info)
+    metric_info.setdefault("grafana_info", grafana_info)
+
     result.append(metric_info)
 
     return result
