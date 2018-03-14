@@ -1,20 +1,26 @@
 #!/usr/bin/python
 #-*- coding:utf-8 -*-
 
-import re, os
-import monitor_params
+import re, sys
+sys.path.append("..")
+import myapp.params as params
 import logging
 import requests
+import json
+import base64
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s',
                     datefmt='%a, %d %b %Y %H:%M:%S')
-import sys
+
 logger = logging.getLogger(sys.path[0] + 'utils')
 
-def get_instances(ip, port):
+def get_ip_list(ip):
+    '''
+    @param ip: a ip string, seperated by comma.
+    @return a list of ip
+    '''
     ip_list = []
-    instances = []
     if r',' in ip.strip():
         try:
             list = re.split(r'[,\s]\s*', ip.strip())
@@ -25,21 +31,138 @@ def get_instances(ip, port):
             ip_list = list
     else:
         ip_list.append(ip.strip())
-        
+    return ip_list
+
+def consul_ip_list():
+    '''
+    @return a list of consul
+    '''
+    ip_list = get_ip_list(params.consul_ip)
+    return ip_list
+
+def get_consul_instance():
+    '''
+    @return a list of consul instances, including ip:port
+    '''
+    ip_list = consul_ip_list()
+    port = params.consul_port
+    success = 0
+
     for i in range(len(ip_list)):
-        url = ip_list[i] + ":" + port
+        url = 'http://{0}:{1}/v1/status/leader'.format(ip_list[i], port)
+        try:
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+        except requests.exceptions.ConnectionError:
+            logging.warning("GET {0} failed! Connection Error.".format(url))
+            continue
+        except requests.RequestException as e:
+            logging.warning(e)
+            continue
+        else:
+            logging.info("GET {0} ok! Response code is = {1}".format(url, response.status_code))
+            result = response.json()
+            if len(result) >= 1:
+                success += 1
+                consul_instance = "{0}:{1}".format(ip_list[i], port)
+                logging.debug("Consul instance is : {0}".format(consul_instance))
+                return consul_instance
+            else:
+                continue
+    if not success:
+        logging.error("No consul agent available, please check it out.")
+        sys.exit(1)
+
+def service_info(service_name):
+    '''
+    @return a dict of service info including service_ip and service_port via the service_name given in the param.
+    '''
+    service_ip = []
+    consul_instance = get_consul_instance()
+    logging.debug("Consul instance is: {0}".format(consul_instance))
+    url = 'http://{0}/v1/catalog/service/{1}'.format(consul_instance, service_name)
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+    except requests.exceptions.ConnectionError:
+        logging.error("GET {0} failed! Connection Error.".format(url))
+    except requests.RequestException as e:
+        logging.error(e)
+    else:
+        logging.info("GET {0} ok! Response code is = {1}".format(url, response.status_code))
+        result = response.json()
+        if len(result):
+            service_port = result[0]['ServicePort']
+            for i in range(len(result)):
+                service_ip.append(result[i]['ServiceAddress'])
+        else:
+            logging.warning("No service named {0} in consul cluster.".format(service_name))
+            service_port = None
+        service_info = {
+            "service_ip": service_ip,
+            "service_port": service_port
+        }
+        return service_info
+
+def get_process_port(process_exporter_name):
+    '''
+    @return a list of service ip according the service_name given in the param.
+    '''
+    consul_instance = get_consul_instance()
+    logging.debug("Consul instance is: {0}".format(consul_instance))
+    url = 'http://{0}/v1/catalog/service/{1}'.format(consul_instance, process_exporter_name)
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+    except requests.exceptions.ConnectionError:
+        logging.error("GET {0} failed! Connection Error.".format(url))
+    except requests.RequestException as e:
+        logging.error(e)
+    else:
+        logging.info("GET {0} ok! Response code is = {1}".format(url, response.status_code))
+        result = response.json()
+        if len(result):
+            process_port = result[0]['ServicePort']
+            logging.info("The port of {0} is : {1}".format(process_exporter_name, process_port))
+        else:
+            logging.warning("No process_exporter named {0} in consul cluster, no port found.".format(process_exporter_name))
+            process_port = None
+        return process_port
+
+def get_instances(ip_list, port):
+    '''
+    @return instance info, formating on ip:port, via the given ip_list and port.
+    '''
+    instances = []
+    for i in range(len(ip_list)):
+        url = "{0}:{1}".format(ip_list[i], port)
         instances.append(url)
     return instances
 
+def instance_info(service_name, process_exporter_name):
+    services = service_info(service_name)
+    service_ip = services['service_ip']
+    service_port = services['service_port']
+    process_port = get_process_port(process_exporter_name)
+    instances = {}
+    instances.setdefault("service_instance", get_instances(service_ip, service_port))
+    instances.setdefault("process_instance", get_instances(service_ip, process_port))
+    return instances
 
 
-def get_instance_index(process):
+def get_instance_index(service_name, process_exporter_name):
+    '''
+    According to service_name(prometheus or grafana_server) to get instance index. 
+    '''
     success = 0.0
-    prometheus_instances = get_instances(monitor_params.prometheus_ip, monitor_params.prometheus_port)
-    for index in range(len(prometheus_instances)):
+    prometheus_instances = instance_info("prometheus", process_exporter_name)['service_instance']
+    instance_infos = instance_info(service_name, process_exporter_name)
+    service_instances = instance_infos['service_instance']
+    process_instances = instance_infos['process_instance']
+    for index in range(len(service_instances)):
         prom_url = 'http://{0}/api/v1/query'.format(prometheus_instances[index])
         param = {
-            "query": 'up{{job="{0}"}}'.format(process)
+            "query": '{0}_process_up{{instance="{1}"}}'.format(service_name, process_instances[index])
         }
         logging.info("start GET %s?%s", prom_url, param)
         try:
@@ -63,9 +186,12 @@ def get_instance_index(process):
         logging.error("No prometheus or grafana available, please check it out.")
         sys.exit(1)
 
-def normal_index():
-    prom_index = get_instance_index("prometheus")
-    grafana_index = get_instance_index("grafana")
+def normal_index(process_exporter_name):
+    '''
+    @return the index of available prometheus and grafana.
+    '''
+    prom_index = get_instance_index("prometheus", process_exporter_name)
+    grafana_index = get_instance_index("grafana_server", process_exporter_name)
     if prom_index == grafana_index:
         logging.info("prometheus and grafana all normal, index is: {0}".format(grafana_index))
         return grafana_index
@@ -78,21 +204,60 @@ def normal_index():
         logging.info("prometheus1 down, prometheus2 OK. grafana OK, using prometheus index, the index is: {0}".format(prom_index))
         return prom_index
 
-def prometheus_url():
-    prometheus_instances = get_instances(monitor_params.prometheus_ip, monitor_params.prometheus_port)
-    index = normal_index()
+def prometheus_url(process_exporter_name):
+    prometheus_instances = instance_info("prometheus", process_exporter_name)['service_instance']
+    index = normal_index(process_exporter_name)
     url = 'http://{0}/api/v1/query'.format(prometheus_instances[index])
     return url
 
-def grafana_url():
-    grafana_instances = get_instances(monitor_params.grafana_outside_ip, monitor_params.grafana_port)
-    index = normal_index()
+def grafana_url(process_exporter_name):
+    grafana_instances = instance_info("grafana_server", process_exporter_name)['service_instance']
+    index = normal_index(process_exporter_name)
+    logging.debug("grafana available instance : {0}".format(grafana_instances[index]))
     return grafana_instances[index]
 
+def grafana_floating_url(process_exporter_name):
+    instance = grafana_url(process_exporter_name).split(":")
+    ip = instance[0]
+    port = instance[1]
+    logging.debug("grafana ip: {0}, and grafana port: {1}.".format(ip, port))
+    map = floating_ip_map()
+    if ip in map.keys():
+        floating_ip = map[ip]
+        floating_instance = "{0}:{1}".format(floating_ip, port)
+        logging.info("Get grafana ip {0} in floating ip map, grafana floating instance is : {1}.".format(ip, floating_instance))
+        return floating_instance        
+    else:
+        logging.error("No grafana ip {0} found in floating ip map, please check.".format(ip))
+        sys.exit(1)
+
+
+def floating_ip_map():
+    '''
+    http://consul_instance/v1/kv/floating_ip_map?recurse
+    @return: a list of floating ip.
+    '''
+    consul_instance = get_consul_instance()
+    floating_ip_info = {}
+    url = 'http://{0}/v1/kv/floating_ip_map?recurse'.format(consul_instance)
+    logging.info("start GET %s", url)
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logging.error(e)
+    else:
+        result = response.json()
+        for i in range(len(result)):
+            floating_ip_info.update(json.loads(base64.b64decode(result[i]['Value']).decode()))
+    logging.debug("The floating ip map info is : {0}.".format(floating_ip_info))
+    return floating_ip_info
 
 def main():
-    print prometheus_url()
-    print grafana_url()
+    process_exporter_name = "process_status_exporter"
+    print prometheus_url(process_exporter_name)
+    print grafana_url(process_exporter_name)
+    print grafana_floating_url(process_exporter_name)
 
 if __name__ == '__main__':
     main()

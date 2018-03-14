@@ -7,8 +7,6 @@ import re
 import logging
 import time
 from pprint import pprint
-# from util import request_util, dic_to_str, cpu_cores
-# from . import params
 import params
 import base64
 

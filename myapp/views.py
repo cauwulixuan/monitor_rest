@@ -19,7 +19,7 @@ h = ScrapeMetrics(url)
 
 import sys
 sys.path.append('..')
-import metrics.monitor
+import metrics.monitor as monitor
 
 @api_view(['GET'])
 def hosts_list(request):
@@ -49,7 +49,7 @@ def module_list(request):
     List all module metrics.
     """
     if request.method == 'GET':
-        return JsonResponse(metrics.monitor.monitor_metrics(), safe=False)
+        return JsonResponse(monitor.monitor_metrics(), safe=False)
 
 @api_view(['GET'])
 def test(request):
