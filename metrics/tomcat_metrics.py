@@ -27,8 +27,8 @@ class TomcatMetrics(CommonMetrics):
         CommonMetrics.__init__(self, process_exporter_name, "tomcat")
         self.master_name = "tomcat_master"
         self.tenant_name = "tomcat_tenant"
-        self.master_instance_infos = utils.instance_info(self.master_name, self._process_name)
-        self.tenant_instance_infos = utils.instance_info(self.tenant_name, self._process_name)
+        self.master_instance_infos = self.instance_info(self.master_name)
+        self.tenant_instance_infos = self.instance_info(self.tenant_name)
         self._master_instance = self.master_instance_infos['service_instance']
         self._tenant_instance = self.tenant_instance_infos['service_instance']
         self._process_instance = self.master_instance_infos['process_instance']
@@ -69,7 +69,7 @@ class TomcatMetrics(CommonMetrics):
         success_count = master_count + tenant_count
         if master_count >= 1 and tenant_count >=1:
             state = 1.0
-        logging.info("tomcat state is %s" % (state))
+        logging.debug("tomcat state is %s" % (state))
         return [state, success_count]
 
     def tomcat_cpu_usage(self, role, process_instance):
@@ -125,6 +125,7 @@ class TomcatMetrics(CommonMetrics):
 
     def cluster_list(self):
         uptime = time()
+        cluster_state = self.cluster_state()
         for i in range(len(self._process_instance)):
             master_state = self.tomcat_node_state(self.master_name, self._process_instance[i])
             tenant_state = self.tomcat_node_state(self.tenant_name, self._process_instance[i])
@@ -144,9 +145,9 @@ class TomcatMetrics(CommonMetrics):
             tenant_info.append(self.tomcat_node_detail(self.tenant_name, self._process_instance[i], self._tenant_instance[i]))
 
         cluster_info = {
-            "tomcat_cluster_state" : self.cluster_state()[0],
+            "tomcat_cluster_state" : cluster_state[0],
             "tomcat_total_nodes" : float(sum([len(self._master_instance), len(self._tenant_instance)])),
-            "tomcat_healthy_nodes" : self.cluster_state()[1],
+            "tomcat_healthy_nodes" : cluster_state[1],
             "tomcat_uptime" : time() - uptime,
             "tomcat_master_info": master_info,
             "tomcat_tenant_info": tenant_info
@@ -154,21 +155,23 @@ class TomcatMetrics(CommonMetrics):
         return cluster_info
 
     def tomcat_node_detail(self, role, process_instance, role_instance):
-        if not self.tomcat_node_state(role, process_instance):
+
+        tomcat_node_state = self.tomcat_node_state(role, process_instance)
+        if not tomcat_node_state:
             node_info = {
-                "tomcat_{0}_state".format(role) : 0.0,
-                "tomcat_{0}_uptime".format(role) : 0.0,
-                "tomcat_{0}_cpu_usage".format(role) : 0.0,
-                "tomcat_{0}_mem_usage".format(role) : 0.0,
-                "tomcat_{0}_self._prom_url".format(role) : None
+                "{0}_state".format(role) : 0.0,
+                "{0}_uptime".format(role) : 0.0,
+                "{0}_cpu_usage".format(role) : 0.0,
+                "{0}_mem_usage".format(role) : 0.0,
+                "{0}_self._prom_url".format(role) : None
             }
         else:
             node_info = {
-                "tomcat_{0}_node_state".format(role) : self.tomcat_node_state(role, process_instance),
-                "tomcat_{0}_uptime".format(role) : time() - self.tomcat_uptime(role, process_instance),
-                "tomcat_{0}_cpu_usage".format(role) : self.tomcat_cpu_usage(role, process_instance),
-                "tomcat_{0}_mem_usage".format(role) : self.tomcat_mem_usage(role, process_instance),
-                "tomcat_{0}_url".format(role) : 'http://{0}/dashboard/db/tomcat-dashboard-for-prometheus?orgId=1&var-instance={1}&kiosk'.format(self._grafana_url, role_instance)
+                "{0}_node_state".format(role) : tomcat_node_state,
+                "{0}_uptime".format(role) : time() - self.tomcat_uptime(role, process_instance),
+                "{0}_cpu_usage".format(role) : self.tomcat_cpu_usage(role, process_instance),
+                "{0}_mem_usage".format(role) : self.tomcat_mem_usage(role, process_instance),
+                "{0}_url".format(role) : 'http://{0}/dashboard/db/tomcat-dashboard-for-prometheus?orgId=1&var-instance={1}&kiosk'.format(self._grafana_url, role_instance)
             }
         return node_info
 

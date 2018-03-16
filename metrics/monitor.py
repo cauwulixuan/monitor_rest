@@ -10,7 +10,6 @@ import myapp.params as params
 from common_metrics import CommonMetrics
 from consul_metrics import ConsulMetrics
 from tomcat_metrics import TomcatMetrics
-from grafana_metrics import GrafanaMetrics
 
 def monitor_metrics():
 
@@ -25,6 +24,7 @@ def monitor_metrics():
         "slapd",
         "mysqld",
         "prometheus",
+        "grafana_server"
     ]
     process_name = "process_status_exporter"
     
@@ -32,8 +32,6 @@ def monitor_metrics():
     consul_info = consul.cluster_list()
     tomcat = TomcatMetrics(process_name)
     tomcat_info = tomcat.cluster_list()
-    grafana = GrafanaMetrics(process_name)
-    grafana_info = grafana.cluster_list()
 
     for i in range(len(name_list)):
         common = CommonMetrics(process_name, name_list[i])
@@ -41,7 +39,6 @@ def monitor_metrics():
         metric_info.setdefault("{0}_info".format(name_list[i]), metrics)
     metric_info.setdefault("consul_info", consul_info)
     metric_info.setdefault("tomcat_info", tomcat_info)
-    metric_info.setdefault("grafana_info", grafana_info)
     result.append(metric_info)
     return result
 

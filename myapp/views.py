@@ -50,13 +50,3 @@ def module_list(request):
     """
     if request.method == 'GET':
         return JsonResponse(monitor.monitor_metrics(), safe=False)
-
-@api_view(['GET'])
-def test(request):
-    """
-    List all module metrics.
-    """
-    import test_metrics
-    if request.method == 'GET':
-        print test_metrics
-        return JsonResponse(test_metrics.test, safe=False)        

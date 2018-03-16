@@ -27,14 +27,23 @@ class ConsulMetrics(CommonMetrics):
 
     def consul_process_instance(self):
         '''
-        @return a list of service ip according the service_name given in the param.
+        @return a list of service process instance according the service_name given in the param.
         '''
         process_instances = []
         ip_list = utils.consul_ip_list()
-        port = utils.get_process_port(self._process_name)
         for i in range(len(ip_list)):
-            process_instances.append("{0}:{1}".format(ip_list[i], port))
+            process_instances.append("{0}:{1}".format(ip_list[i], self._process_port))
         return process_instances
+
+    def consul_service_instance(self):
+        '''
+        @return a list of service ip according the service_name given in the param.
+        '''
+        serivce_instances = []
+        ip_list = utils.consul_ip_list()
+        for i in range(len(ip_list)):
+            serivce_instances.append("{0}:{1}".format(ip_list[i], params.consul_port))
+        return serivce_instances
 
 
     def cluster_state(self):
@@ -49,6 +58,7 @@ class ConsulMetrics(CommonMetrics):
 
         for i in range(len(process_instances)):
             consul_up = self.node_state(process_instances[i])
+            logging.debug("The state of {0} is {1}".format(process_instances[i], consul_up))
             if consul_up:
                 success_count += 1
             else:
@@ -57,14 +67,18 @@ class ConsulMetrics(CommonMetrics):
             state = 1.0
         else:
             state = 0.0
-        logging.info("success count is: {0}, and state is: {1}".format(success_count, state))
+        logging.debug("success count is: {0}, and state is: {1}".format(success_count, state))
         return [state,success_count]
 
     def cluster_list(self):
         process_instances = self.consul_process_instance()
+        serivce_instances = self.consul_service_instance()
         uptime = time()
+        cluster_state = self.cluster_state()
+        logging.debug("cluster state is: {0}.".format(cluster_state))
         for i in range(len(process_instances)):
             state = self.node_state(process_instances[i])
+            logging.debug("The state of {0} is {1}".format(process_instances[i], state))
             if state:
                 uptime = self.uptime(process_instances[i])
                 break
@@ -73,12 +87,12 @@ class ConsulMetrics(CommonMetrics):
 
         node_info = []
         for i in range(len(process_instances)):
-            node_info.append(self.node_detail(process_instances[i]))
+            node_info.append(self.node_detail(process_instances[i], serivce_instances[i]))
 
         cluster_info = {
-            "{0}_cluster_state".format(self._service_name) : self.cluster_state()[0],
+            "{0}_cluster_state".format(self._service_name) : cluster_state[0],
             "{0}_total_nodes".format(self._service_name) : float(len(process_instances)),
-            "{0}_healthy_nodes".format(self._service_name) : self.cluster_state()[1],
+            "{0}_healthy_nodes".format(self._service_name) : cluster_state[1],
             "{0}_uptime".format(self._service_name) : time() - uptime,
             "{0}_nodes_info".format(self._service_name) : node_info
         }
