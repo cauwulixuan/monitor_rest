@@ -123,7 +123,10 @@ class ServiceInfo(object):
 
     def __init__(self, process_exporter_name):
         self._process_name = process_exporter_name
-        self._process_port = get_process_port(process_exporter_name)
+        self._process_port = get_process_port(process_exporter_name)        
+        self._prom_instances = self.instance_info("prometheus")['service_instance']
+        self._prom_index = self.get_instance_index("prometheus")
+        self._grafana_index = self.get_instance_index("grafana_server")
 
     def service_info(self, service_name):
         '''
@@ -172,39 +175,77 @@ class ServiceInfo(object):
         instances.setdefault("service_instance", self.get_instances(service_ip, service_port))
         instances.setdefault("process_instance", self.get_instances(service_ip, self._process_port))
         return instances
-    
+
+    def get_err_instance_index(self):
+        
+        prom_index = set()
+        grafana_index = set()
+        err_info = {}
+        prometheus_instances = self._prom_instances
+        instance_infos = self.instance_info("grafana_server")
+        service_instances = instance_infos['service_instance']
+        process_instances = instance_infos['process_instance']
+        for index in range(len(service_instances)):
+            for i in range(len(prometheus_instances)):
+                prom_url = 'http://{0}/api/v1/query'.format(prometheus_instances[i])
+                param = {
+                    "query": 'grafana_server_process_up{{instance="{0}"}}'.format(process_instances[index])
+                }
+                logging.info("start GET %s?%s", prom_url, param)
+                try:
+                    response = requests.get(prom_url, params=param)
+                    response.raise_for_status()
+                except requests.exceptions.ConnectionError:
+                    logging.error("GET %s?%s failed! Connection Error.", prom_url, param)
+                    prom_index.add(i)
+                    continue
+                except requests.RequestException as e:
+                    logging.error(e)
+                    continue
+                else:
+                    logging.info("GET /api/v1/query?%s ok! Response code is = %s", param, response.status_code)
+                    result = response.json()
+                    if int(result['data']['result'][0]['value'][1]) == 0:
+                        grafana_index.add(index)
+                    else:
+                        continue
+        err_info.setdefault("prom_err_index", list(prom_index))
+        err_info.setdefault("grafana_err_index", list(grafana_index))
+        return err_info
+
     def get_instance_index(self, service_name):
         '''
         According to service_name(prometheus or grafana_server) to get instance index. 
         '''
         success = 0.0
-        prometheus_instances = self.instance_info("prometheus")['service_instance']
+        prometheus_instances = self._prom_instances
         instance_infos = self.instance_info(service_name)
         service_instances = instance_infos['service_instance']
         process_instances = instance_infos['process_instance']
         for index in range(len(service_instances)):
-            prom_url = 'http://{0}/api/v1/query'.format(prometheus_instances[index])
-            param = {
-                "query": '{0}_process_up{{instance="{1}"}}'.format(service_name, process_instances[index])
-            }
-            logging.info("start GET %s?%s", prom_url, param)
-            try:
-                response = requests.get(prom_url, params=param)
-                response.raise_for_status()
-            except requests.exceptions.ConnectionError:
-                logging.error("GET %s?%s failed! Connection Error.", prom_url, param)
-                continue
-            except requests.RequestException as e:
-                logging.error(e)
-                continue
-            else:
-                logging.info("GET /api/v1/query?%s ok! Response code is = %s", param, response.status_code)
-                result = response.json()
-                if int(result['data']['result'][0]['value'][1]) == 1:
-                    success += 1
-                    return index
-                else:
+            for i in range(len(prometheus_instances)):
+                prom_url = 'http://{0}/api/v1/query'.format(prometheus_instances[i])
+                param = {
+                    "query": '{0}_process_up{{instance="{1}"}}'.format(service_name, process_instances[index])
+                }
+                logging.info("start GET %s?%s", prom_url, param)
+                try:
+                    response = requests.get(prom_url, params=param)
+                    response.raise_for_status()
+                except requests.exceptions.ConnectionError:
+                    logging.error("GET %s?%s failed! Connection Error.", prom_url, param)
                     continue
+                except requests.RequestException as e:
+                    logging.error(e)
+                    continue
+                else:
+                    logging.info("GET /api/v1/query?%s ok! Response code is = %s", param, response.status_code)
+                    result = response.json()
+                    if int(result['data']['result'][0]['value'][1]) == 1:
+                        success += 1
+                        return index
+                    else:
+                        continue
         if not success:
             logging.error("No prometheus or grafana available, please check it out.")
             sys.exit(1)
@@ -213,19 +254,17 @@ class ServiceInfo(object):
         '''
         @return the index of available prometheus and grafana.
         '''
-        prom_index = self.get_instance_index("prometheus")
-        grafana_index = self.get_instance_index("grafana_server")
-        if prom_index == grafana_index:
-            logging.debug("prometheus and grafana all normal, index is: {0}".format(grafana_index))
-            return grafana_index
-        elif prom_index < grafana_index:
+        if self._prom_index == self._grafana_index:
+            logging.debug("prometheus and grafana all normal, index is: {0}".format(self._grafana_index))
+            return self._grafana_index
+        elif self._prom_index < self._grafana_index:
             ''' prometheus1 ok, but grafana1 down, grafana2 ok.'''
-            logging.warning("prometheus1 OK, but grafana1 down, using grafana index, the index is: {0}".format(grafana_index))
-            return grafana_index
+            logging.warning("prometheus1 OK, but grafana1 down, using grafana index, the index is: {0}".format(self._grafana_index))
+            return self._grafana_index
         else:
             ''' prometheus1 down, prometheus2 ok, grafana ok.'''
-            logging.warning("prometheus1 down, prometheus2 OK. grafana OK, using prometheus index, the index is: {0}".format(prom_index))
-            return prom_index
+            logging.warning("prometheus1 down, prometheus2 OK. grafana OK, using prometheus index, the index is: {0}".format(self._prom_index))
+            return self._prom_index
     
     def prometheus_url(self):
         prometheus_instances = self.instance_info("prometheus")['service_instance']
@@ -258,8 +297,10 @@ class ServiceInfo(object):
 def main():
     process_exporter_name = "process_status_exporter"
     service = ServiceInfo(process_exporter_name)
-    print service.prometheus_url()
-    print service.grafana_floating_url()
+    print service.get_instance_index("grafana_server")
+    from pprint import pprint
+    a = service.get_err_instance_index()
+    pprint(a)
 
 if __name__ == '__main__':
     main()

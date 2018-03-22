@@ -35,6 +35,7 @@ class CommonMetrics(ServiceInfo):
         self._prom_url = self.prometheus_url()
         self._grafana_url = self.grafana_floating_url()
         self._grafana_instances = self.grafana_floating_instance()
+        self._index = self.normal_index()
     
     def cluster_state(self):
         '''
@@ -137,8 +138,22 @@ class CommonMetrics(ServiceInfo):
 
         node_info = []
         if "grafana_server" in self._service_name or "prometheus" in self._service_name:
+            logging.debug("grafana_instances = {0}".format(self._grafana_instances))
             for i in range(len(self._process_instance)):
-                node_info.append(self.node_detail(self._process_instance[i], self._service_instance[i], self._grafana_instances[i]))
+                logging.debug("prom_index={0}, grafana_index={1}".format(self._prom_index, self._grafana_index))
+                grafana_err_index = self.get_err_instance_index()['grafana_err_index']
+                prom_err_index = self.get_err_instance_index()['prom_err_index']
+                if self._prom_index != self._grafana_index:
+                    '''如果不等说明要么是grafana挂了，要么是prometheus挂了，url需要全部更新为可用url'''
+                    node_info.append(self.node_detail(self._process_instance[i], self._service_instance[i], self._grafana_instances[self._index]))
+                elif 1 in grafana_err_index or 1 in prom_err_index:
+                    '''
+                       两个index相等，不能说明prom和grafana均正常，只能说明有可能grafana1和prome1正常，其他是否正常未知。
+                       因此，增加判断，获取异常的prometheus和grafana的index,均为数组形式.
+                    '''
+                    node_info.append(self.node_detail(self._process_instance[i], self._service_instance[i], self._grafana_instances[self._index]))
+                else:
+                    node_info.append(self.node_detail(self._process_instance[i], self._service_instance[i], self._grafana_instances[i]))
         else:
             for i in range(len(self._process_instance)):
                 node_info.append(self.node_detail(self._process_instance[i], self._service_instance[i]))
@@ -160,8 +175,10 @@ class CommonMetrics(ServiceInfo):
         else:
             instance = process_instance
 
-        if "prometheus" in self._service_name or "grafana_server" in self._service_name:
+        if "prometheus" in self._service_name:
             service_url = 'http://{0}/dashboard/db/{1}-dashboard-for-prometheus?orgId=1&kiosk'.format(args[0], board_name)
+        elif "grafana_server" in self._service_name:
+            service_url = 'http://{0}/dashboard/db/{1}-dashboard-for-prometheus?orgId=1&var-instance={2}&kiosk'.format(args[0], board_name, service_instance)
         else:
             service_url = 'http://{0}/dashboard/db/{1}-dashboard-for-prometheus?orgId=1&var-instance={2}&kiosk'.format(self._grafana_url, board_name, instance)
 
@@ -187,6 +204,13 @@ def main():
     service_name = "prometheus"
     process_name = "process_status_exporter"
     common = CommonMetrics(process_name, service_name)
+    from pprint import pprint
+    pprint(common.cluster_list())
+
+
+    service_name = "grafana_server"
+    common2 = CommonMetrics(process_name, service_name)
+    pprint(common2.cluster_list())
 
 if __name__ == '__main__':
     main()
